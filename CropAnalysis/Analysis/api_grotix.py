@@ -4,21 +4,21 @@ import shutil
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import JSONResponse
 from google import genai
+from PIL import Image
 
-# Inicializamos la API
-app = FastAPI(title="Grotix Vision API", description="API para análisis de cultivos IoT")
+# 1. PEGA TU API KEY REAL AQUÍ
+api_key = ""
+client = genai.Client(api_key=api_key)
 
-# PEGA TU API KEY REAL AQUÍ
-API_KEY = ""
-client = genai.Client(api_key=API_KEY)
+# 2. Inicializamos el servidor
+app = FastAPI(title="Grotix AI Server")
 
 def analyze_crop_health(image_path: str) -> dict:
-    """Lógica central de análisis con Gemini 2.5 Flash"""
+    """Lógica central de Gemini 2.5 Flash"""
     try:
-        from PIL import Image
         img = Image.open(image_path)
     except Exception as e:
-        return {"error": f"Error al procesar la imagen en el servidor: {e}"}
+        return {"error": f"Error al abrir la imagen en el servidor: {e}"}
 
     prompt = """
     You are an expert agricultural engineer and computer vision specialist. 
@@ -40,7 +40,6 @@ def analyze_crop_health(image_path: str) -> dict:
     """
 
     try:
-        # Usamos el modelo optimizado que validamos
         response = client.models.generate_content(
             model='gemini-2.5-flash',
             contents=[prompt, img]
@@ -54,35 +53,32 @@ def analyze_crop_health(image_path: str) -> dict:
             
         return json.loads(response_text)
 
+    except json.JSONDecodeError:
+        return {"error": "El modelo no devolvió un JSON válido.", "raw_response": response.text}
     except Exception as e:
-        return {"error": f"Fallo en la inferencia de Gemini: {e}"}
+        return {"error": f"Excepción en la API de Gemini: {e}"}
 
-
+# 3. Este es el Endpoint que recibirá la foto desde Flutter
 @app.post("/api/analyze")
 async def analyze_endpoint(file: UploadFile = File(...)):
-    """
-    Endpoint que recibe la foto del ESP32, la analiza y devuelve el JSON.
-    """
-    # 1. Definir ruta temporal para guardar la foto
+    print(f"Recibiendo foto de Flutter: {file.filename}")
     temp_file_path = f"temp_{file.filename}"
-    
     try:
-        # 2. Guardar los bytes de la imagen en el disco
+        # Guardamos la foto temporalmente
         with open(temp_file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
             
-        # 3. Mandar la imagen a analizar con Gemini
+        # La mandamos a analizar
         resultado = analyze_crop_health(temp_file_path)
         
-        # 4. Eliminar el archivo temporal para liberar espacio
+        # Borramos la foto temporal para no llenar el disco de la PC
         if os.path.exists(temp_file_path):
             os.remove(temp_file_path)
             
-        # 5. Retornar el JSON puro al ESP32
+        # Devolvemos el JSON a Flutter
         return JSONResponse(content=resultado)
 
     except Exception as e:
-        # Limpieza de emergencia por si algo falla a la mitad
         if os.path.exists(temp_file_path):
             os.remove(temp_file_path)
         return JSONResponse(content={"error": str(e)}, status_code=500)
